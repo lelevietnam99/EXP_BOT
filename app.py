@@ -6,17 +6,16 @@ import streamlit as st
 from google import genai
 from google.genai import types
 
-EMBED_MODEL = "gemini-embedding-001"
-CHAT_MODEL = st.secrets.get("CHAT_MODEL", "gemini-3.5-flash-lite")  # có thể đổi trong Secrets
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 200
+from common import embed_batch, file_hash, normalize
+
+CHAT_MODEL = st.secrets.get("CHAT_MODEL", "gemini-2.5-flash")
 TOP_K = 4
+INDEX_DIR = "index"
 
 st.set_page_config(page_title="Chatbot Bài Giảng", page_icon="🙏", layout="centered")
 st.title("🙏 HỎI - ĐÁP GIÁO LÝ")
 st.write("Hãy đặt câu hỏi, tôi sẽ trả lời dựa trên các bài giảng đã được tải lên.")
 
-# API key lấy từ Streamlit Secrets (không ghi trực tiếp vào code)
 if "GOOGLE_API_KEY" not in st.secrets:
     st.error("Chưa cấu hình GOOGLE_API_KEY trong Settings → Secrets.")
     st.stop()
@@ -24,65 +23,40 @@ if "GOOGLE_API_KEY" not in st.secrets:
 client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
 
 
-def split_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-    """Cắt văn bản thành các đoạn ~size ký tự, ưu tiên ngắt ở xuống dòng/khoảng trắng."""
-    chunks, start, n = [], 0, len(text)
-    while start < n:
-        end = min(start + size, n)
-        if end < n:
-            cut = max(text.rfind("\n", start, end), text.rfind(" ", start, end))
-            if cut > start + size // 2:
-                end = cut
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        if end >= n:
-            break
-        start = max(end - overlap, start + 1)
-    return chunks
-
-
-def embed_texts(texts, task_type):
-    """Tạo embedding theo lô (tối đa 100 đoạn / lần gọi)."""
-    vectors = []
-    for i in range(0, len(texts), 100):
-        result = client.models.embed_content(
-            model=EMBED_MODEL,
-            contents=texts[i : i + 100],
-            config=types.EmbedContentConfig(task_type=task_type),
-        )
-        vectors.extend(e.values for e in result.embeddings)
-    arr = np.array(vectors, dtype=np.float32)
-    return arr / np.linalg.norm(arr, axis=1, keepdims=True)  # chuẩn hóa để dùng tích vô hướng
-
-
-@st.cache_resource(show_spinner="Đang đọc bài giảng và tạo chỉ mục...")
+@st.cache_resource(show_spinner="Đang tải chỉ mục bài giảng...")
 def load_index():
-    files = sorted(glob.glob("data/*.txt"))
-    if not files:
-        return None
-    chunks = []
-    for path in files:
+    """Đọc các chỉ mục đã tạo sẵn (không gọi API). Trả về (đoạn, vector, file_chưa_có_chỉ_mục)."""
+    chunks, vectors, indexed = [], [], {}
+    for path in sorted(glob.glob(os.path.join(INDEX_DIR, "*.npz"))):
+        with np.load(path) as saved:
+            chunks.extend(saved["chunks"].tolist())
+            vectors.append(saved["vectors"])
+            indexed[str(saved["source"])] = str(saved["hash"])
+
+    pending = []
+    for path in sorted(glob.glob("data/*.txt")):
+        name = os.path.basename(path)
         with open(path, encoding="utf-8") as f:
-            chunks.extend(split_text(f.read()))
-    return chunks, embed_texts(chunks, "RETRIEVAL_DOCUMENT")
+            if indexed.get(name) != file_hash(f.read()):
+                pending.append(name)
+
+    if not chunks:
+        return None, None, pending
+    return chunks, np.vstack(vectors), pending
 
 
-try:
-    index = load_index()
-except Exception as e:
-    st.error(f"Không tạo được chỉ mục từ Gemini API: {e}")
-    st.info(
-        "Nếu lỗi là 403 SERVICE_DISABLED: hãy tạo key tại https://aistudio.google.com/apikey "
-        "(hoặc bật 'Generative Language API' cho project của key), rồi cập nhật Secrets và Reboot app."
+chunks, chunk_vectors, pending = load_index()
+
+if pending:
+    st.sidebar.info(
+        "Các file sau đang được xử lý (khoảng vài phút), chưa dùng để trả lời được:\n\n"
+        + "\n".join(f"- {n}" for n in pending)
     )
-    st.stop()
 
-if index is None:
-    st.warning("Chưa có dữ liệu bài giảng. Hãy đặt các file .txt vào thư mục 'data/'.")
+if chunks is None:
+    st.warning("Chưa có chỉ mục bài giảng. Hãy kiểm tra tab Actions trên GitHub xem "
+               "'Build index' đã chạy xong chưa, rồi tải lại trang.")
     st.stop()
-
-chunks, chunk_vectors = index
 
 PROMPT = """Bạn là một trợ lý ảo hỗ trợ Phật tử, được tạo ra để trả lời câu hỏi dựa trên các bài giảng của Quý Thầy.
 Hãy trả lời bằng giọng điệu từ bi, hòa ái, tôn trọng và dễ hiểu.
@@ -100,7 +74,7 @@ Câu trả lời:"""
 
 
 def answer_question(question):
-    q_vec = embed_texts([question], "RETRIEVAL_QUERY")[0]
+    q_vec = normalize(embed_batch(client, [question], "RETRIEVAL_QUERY"))[0]
     top = np.argsort(chunk_vectors @ q_vec)[::-1][:TOP_K]
     context = "\n\n".join(chunks[i] for i in top)
     response = client.models.generate_content(
@@ -111,7 +85,6 @@ def answer_question(question):
     return response.text or "Dạ, hiện chưa có câu trả lời. Mong bạn thử lại ạ."
 
 
-# Lịch sử chat
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
