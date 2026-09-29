@@ -7,7 +7,7 @@ from google import genai
 from google.genai import types
 
 EMBED_MODEL = "gemini-embedding-001"
-CHAT_MODEL = st.secrets.get("CHAT_MODEL", "gemini-3.8-flash")  # có thể đổi trong Secrets
+CHAT_MODEL = st.secrets.get("CHAT_MODEL", "gemini-3.5-flash-lite")  # có thể đổi trong Secrets
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
 TOP_K = 4
