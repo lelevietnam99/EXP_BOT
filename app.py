@@ -8,7 +8,7 @@ from google.genai import types
 
 from common import embed_batch, file_hash, normalize
 
-CHAT_MODEL = st.secrets.get("CHAT_MODEL", "gemini-2.5-flash")
+CHAT_MODEL = st.secrets.get("CHAT_MODEL", "gemini-3.5-flash")
 TOP_K = 4
 INDEX_DIR = "index"
 

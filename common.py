@@ -46,7 +46,15 @@ def embed_batch(client, texts, task_type, max_retries=8):
             )
             return [e.values for e in result.embeddings]
         except errors.ClientError as e:
-            if e.code != 429 or attempt == max_retries - 1:
+            if e.code != 429:
+                raise
+            if "PerDay" in str(e):  # hết hạn mức theo NGÀY: chờ thử lại cũng vô ích
+                raise RuntimeError(
+                    "Đã hết hạn mức embedding miễn phí TRONG NGÀY của Google (1000 lượt/ngày). "
+                    "Hạn mức tự làm mới vào nửa đêm giờ Thái Bình Dương (khoảng 14h giờ Việt Nam). "
+                    "Hãy chạy lại sau thời điểm đó."
+                ) from e
+            if attempt == max_retries - 1:
                 raise
             m = re.search(r"retry in ([\d.]+)s", str(e))
             wait = float(m.group(1)) + 2 if m else 30
