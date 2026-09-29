@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hỏi - Đáp Giáo Lý</title>
+<style>
+  :root { --bg:#faf6ef; --card:#ffffff; --text:#2b2620; --muted:#7a6f62; --accent:#b7791f; --user:#f3e3c3; --border:#e6dccb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#1c1915; --card:#26221c; --text:#efe8dc; --muted:#a39886; --accent:#e0a84a; --user:#4a3b22; --border:#3a342a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height:1.6; }
+  .wrap { max-width:720px; margin:0 auto; padding:16px; min-height:100vh; display:flex; flex-direction:column; }
+  header { text-align:center; padding:12px 0 8px; }
+  h1 { margin:0; font-size:1.4rem; color:var(--accent); }
+  header p { margin:6px 0 0; color:var(--muted); font-size:.95rem; }
+  #chat { flex:1; display:flex; flex-direction:column; gap:12px; padding:12px 0; }
+  .msg { max-width:88%; padding:10px 14px; border-radius:14px; white-space:pre-wrap; word-wrap:break-word; border:1px solid var(--border); }
+  .user { align-self:flex-end; background:var(--user); }
+  .bot { align-self:flex-start; background:var(--card); }
+  .bot.error { border-color:#c0392b; }
+  .src { display:block; margin-top:8px; font-size:.8rem; color:var(--muted); }
+  form { position:sticky; bottom:0; display:flex; gap:8px; padding:12px 0 16px; background:var(--bg); }
+  textarea { flex:1; resize:none; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--card); color:var(--text); font:inherit; max-height:120px; }
+  button { padding:0 18px; border:0; border-radius:12px; background:var(--accent); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  .hint { text-align:center; color:var(--muted); font-size:.8rem; padding-bottom:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🙏 HỎI - ĐÁP GIÁO LÝ</h1>
+    <p>Hãy đặt câu hỏi, tôi sẽ trả lời dựa trên các bài giảng đã được tải lên.</p>
+  </header>
+  <main id="chat" aria-live="polite"></main>
+  <form id="form">
+    <textarea id="q" rows="1" maxlength="500" placeholder="Nhập câu hỏi của bạn (ví dụ: Thầy dạy thế nào về lòng từ bi?)" required></textarea>
+    <button id="send" type="submit">Gửi</button>
+  </form>
+  <div class="hint">Câu trả lời do AI tạo từ nội dung bài giảng, mong bạn đối chiếu với lời Thầy dạy.</div>
+</div>
+
+<script>
+  // Dán địa chỉ Web app của Apps Script (kết thúc bằng /exec) vào đây:
+  const API_URL = "https://script.google.com/macros/s/AKfycbwzCHvsTBrTTxZIoKPmY9DDZFSoGx3XoJ4jLZDMCi-05bGEywj_A233hbYvtxfAKfPh/exec";
+
+  const chat = document.getElementById("chat");
+  const form = document.getElementById("form");
+  const input = document.getElementById("q");
+  const sendBtn = document.getElementById("send");
+
+  function addMessage(text, cls, sources) {
+    const div = document.createElement("div");
+    div.className = "msg " + cls;
+    div.textContent = text;
+    if (sources && sources.length) {
+      const s = document.createElement("span");
+      s.className = "src";
+      s.textContent = "Nguồn: " + sources.map(n => n.replace(/\.txt$/i, "")).join("; ");
+      div.appendChild(s);
+    }
+    chat.appendChild(div);
+    div.scrollIntoView({ behavior: "smooth", block: "end" });
+    return div;
+  }
+
+  async function ask(question) {
+    // Không đặt header tùy chỉnh để trình duyệt gửi "yêu cầu đơn giản" (tránh lỗi CORS với Apps Script)
+    const res = await fetch(API_URL, { method: "POST", body: JSON.stringify({ question }) });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const question = input.value.trim();
+    if (!question) return;
+    addMessage(question, "user");
+    input.value = "";
+    sendBtn.disabled = true;
+    const waiting = addMessage("Đang tìm ý trong bài giảng...", "bot");
+    try {
+      const data = await ask(question);
+      waiting.remove();
+      if (data.error) addMessage(data.error, "bot error");
+      else addMessage(data.answer, "bot", data.sources);
+    } catch (err) {
+      waiting.remove();
+      addMessage("Không kết nối được máy chủ. Bạn vui lòng thử lại sau ạ.", "bot error");
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  });
+
+  // Enter để gửi, Shift+Enter để xuống dòng
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+  });
+</script>
+</body>
+</html>
